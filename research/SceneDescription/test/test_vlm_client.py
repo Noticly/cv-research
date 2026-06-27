@@ -1,28 +1,16 @@
 """
 Tests for vlm_client.py.
 
-Both anthropic and openai SDKs are mocked via sys.modules so no real
-API calls or installed packages are required.
+Both anthropic and openai SDKs are mocked per-test via patch.dict so
+no real API calls or installed packages are required.
 """
 import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-# ------------------------------------------------------------------
-# Inject fake SDK modules before importing vlm_client
-# ------------------------------------------------------------------
-_fake_anthropic = MagicMock()
-_fake_openai = MagicMock()
-sys.modules.setdefault("anthropic", _fake_anthropic)
-sys.modules.setdefault("openai", _fake_openai)
+import src.vlm_client as vlm
 
-import src.vlm_client as vlm  # noqa: E402
-
-
-# ------------------------------------------------------------------
-# Helpers
-# ------------------------------------------------------------------
 IMAGE_B64 = "aGVsbG8="  # "hello" in base64 — valid placeholder
 
 
@@ -44,11 +32,13 @@ def _make_openai_response(text: str):
 
 def test_anthropic_backend_selected_by_default(monkeypatch):
     monkeypatch.delenv("VLM_BACKEND", raising=False)
+    mock_anthropic = MagicMock()
     mock_client = MagicMock()
     mock_client.messages.create.return_value = _make_anthropic_response("A busy street.")
-    _fake_anthropic.Anthropic.return_value = mock_client
+    mock_anthropic.Anthropic.return_value = mock_client
 
-    result = vlm.describe_scene(IMAGE_B64)
+    with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
+        result = vlm.describe_scene(IMAGE_B64)
 
     assert result == "A busy street."
     mock_client.messages.create.assert_called_once()
@@ -56,16 +46,17 @@ def test_anthropic_backend_selected_by_default(monkeypatch):
 
 def test_anthropic_prompt_construction(monkeypatch):
     monkeypatch.delenv("VLM_BACKEND", raising=False)
+    mock_anthropic = MagicMock()
     mock_client = MagicMock()
     mock_client.messages.create.return_value = _make_anthropic_response("desc")
-    _fake_anthropic.Anthropic.return_value = mock_client
+    mock_anthropic.Anthropic.return_value = mock_client
 
-    vlm.describe_scene(IMAGE_B64)
+    with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
+        vlm.describe_scene(IMAGE_B64)
 
     call_kwargs = mock_client.messages.create.call_args.kwargs
     assert call_kwargs["system"] == vlm.SYSTEM_PROMPT
     assert call_kwargs["model"] == "claude-sonnet-4-6"
-    # image block present in first message
     content = call_kwargs["messages"][0]["content"]
     image_block = next(b for b in content if b.get("type") == "image")
     assert image_block["source"]["data"] == IMAGE_B64
@@ -74,12 +65,14 @@ def test_anthropic_prompt_construction(monkeypatch):
 
 def test_anthropic_timeout_raises(monkeypatch):
     monkeypatch.delenv("VLM_BACKEND", raising=False)
+    mock_anthropic = MagicMock()
     mock_client = MagicMock()
     mock_client.messages.create.side_effect = Exception("request timed out after 5s")
-    _fake_anthropic.Anthropic.return_value = mock_client
+    mock_anthropic.Anthropic.return_value = mock_client
 
-    with pytest.raises(TimeoutError):
-        vlm.describe_scene(IMAGE_B64)
+    with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
+        with pytest.raises(TimeoutError):
+            vlm.describe_scene(IMAGE_B64)
 
 
 # ------------------------------------------------------------------
@@ -88,11 +81,13 @@ def test_anthropic_timeout_raises(monkeypatch):
 
 def test_openai_backend_selected_via_env(monkeypatch):
     monkeypatch.setenv("VLM_BACKEND", "openai")
+    mock_openai = MagicMock()
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _make_openai_response("A park.")
-    _fake_openai.OpenAI.return_value = mock_client
+    mock_openai.OpenAI.return_value = mock_client
 
-    result = vlm.describe_scene(IMAGE_B64)
+    with patch.dict(sys.modules, {"openai": mock_openai}):
+        result = vlm.describe_scene(IMAGE_B64)
 
     assert result == "A park."
     mock_client.chat.completions.create.assert_called_once()
@@ -100,11 +95,13 @@ def test_openai_backend_selected_via_env(monkeypatch):
 
 def test_openai_prompt_construction(monkeypatch):
     monkeypatch.setenv("VLM_BACKEND", "openai")
+    mock_openai = MagicMock()
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = _make_openai_response("desc")
-    _fake_openai.OpenAI.return_value = mock_client
+    mock_openai.OpenAI.return_value = mock_client
 
-    vlm.describe_scene(IMAGE_B64)
+    with patch.dict(sys.modules, {"openai": mock_openai}):
+        vlm.describe_scene(IMAGE_B64)
 
     call_kwargs = mock_client.chat.completions.create.call_args.kwargs
     assert call_kwargs["model"] == "gpt-4o"
@@ -115,10 +112,13 @@ def test_openai_prompt_construction(monkeypatch):
 
 def test_openai_timeout_raises(monkeypatch):
     monkeypatch.setenv("VLM_BACKEND", "openai")
+    mock_openai = MagicMock()
+    APITimeoutError = type("APITimeoutError", (Exception,), {})
+    mock_openai.APITimeoutError = APITimeoutError
     mock_client = MagicMock()
-    _fake_openai.APITimeoutError = type("APITimeoutError", (Exception,), {})
-    mock_client.chat.completions.create.side_effect = _fake_openai.APITimeoutError("timeout")
-    _fake_openai.OpenAI.return_value = mock_client
+    mock_client.chat.completions.create.side_effect = APITimeoutError("timeout")
+    mock_openai.OpenAI.return_value = mock_client
 
-    with pytest.raises(TimeoutError):
-        vlm.describe_scene(IMAGE_B64)
+    with patch.dict(sys.modules, {"openai": mock_openai}):
+        with pytest.raises(TimeoutError):
+            vlm.describe_scene(IMAGE_B64)
