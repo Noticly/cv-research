@@ -52,18 +52,20 @@ def test_earcon_full_right_energy():
 
 
 def test_emit_calls_play():
-    _sd_stub.play.reset_mock()
+    sd = sys.modules["sounddevice"]
+    sd.play.reset_mock()
     detections = [{"label": "person", "confidence": 0.9,
                    "bbox": (0, 0, 320, 240), "centroid": (0, 120)}]
     emit(detections, frame_dims=(640, 480))
-    _sd_stub.play.assert_called_once()
-    args, kwargs = _sd_stub.play.call_args
+    sd.play.assert_called_once()
+    args, kwargs = sd.play.call_args
     buf = args[0]
     assert buf.shape[1] == 2
     assert kwargs.get("blocking") is False
 
 
 def test_emit_empty_detections_no_play():
-    _sd_stub.play.reset_mock()
+    sd = sys.modules["sounddevice"]
+    sd.play.reset_mock()
     emit([], frame_dims=(640, 480))
-    _sd_stub.play.assert_not_called()
+    sd.play.assert_not_called()
