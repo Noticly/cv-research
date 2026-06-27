@@ -2,6 +2,7 @@ import sys
 import time
 from typing import Any
 
+import cv2
 import numpy as np
 
 # Lazy singleton — initialised on first call to recognize() to avoid import-time cost.
@@ -19,6 +20,15 @@ def _get_ocr(lang: str = "en") -> Any:
 
 def recognize(img: np.ndarray, conf_threshold: float = 0.6, lang: str = "en") -> list[dict]:
     """Return OCR tokens sorted top-to-bottom, left-to-right, above conf_threshold."""
+    from src.preprocess import correct_orientation  # lazy to avoid circular import
+
+    # Correct coarse orientation (90°/180°/270° rotations) before OCR
+    img = correct_orientation(img)
+
+    # PaddleOCR performs best on colour images
+    if img.ndim == 2:
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+
     ocr = _get_ocr(lang)
     t0 = time.perf_counter()
     raw = ocr.ocr(img, cls=True)
