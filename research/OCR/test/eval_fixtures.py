@@ -9,9 +9,10 @@ For each fixture subfolder the script:
   - Runs OCR via src.ocr_engine.recognize() (includes orientation correction).
   - Computes per-image Character Error Rate (CER).
   - Prints a detailed report to stdout.
-  - Saves eval_<commit>.json and eval_<commit>.html to the fixture subfolder.
-    The HTML report embeds annotated images (bounding boxes overlaid) and a
-    per-token table so results can be reviewed without running the script again.
+  - Saves eval_<YYYYMMDD>_<NNN>.json and .html to the fixture subfolder.
+    NNN is the 1-based sequence number of runs on that calendar date in that folder.
+    The HTML report embeds annotated images (bounding boxes overlaid), the git
+    commit hash and message, and a per-token table.
 """
 
 import argparse
@@ -35,7 +36,6 @@ FIXTURE_ROOT = _PROJECT_ROOT / "test" / "fixtures"
 PASS_THRESHOLD = 0.30
 
 # RGB palette shared between image annotation and HTML token colours.
-# Index i → token i on the image and in the HTML table.
 _PALETTE: list[tuple[int, int, int]] = [
     (255, 204,   0),  # amber
     (  0, 200,  80),  # green
@@ -59,20 +59,58 @@ def _palette_bgr(i: int) -> tuple[int, int, int]:
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Git helpers
 # ---------------------------------------------------------------------------
 
-def _git_commit() -> str:
-    try:
+def _git_commit_info() -> dict:
+    """Return short hash, full hash, subject line, and body of HEAD commit."""
+    def _run(*args) -> str:
         return subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"],
+            ["git"] + list(args),
             cwd=_PROJECT_ROOT,
             stderr=subprocess.DEVNULL,
             text=True,
         ).strip()
-    except Exception:
-        return "unknown"
 
+    try:
+        return {
+            "hash":         _run("rev-parse", "--short", "HEAD"),
+            "hash_full":    _run("rev-parse", "HEAD"),
+            "subject":      _run("log", "-1", "--format=%s"),
+            "body":         _run("log", "-1", "--format=%b"),
+        }
+    except Exception:
+        return {"hash": "unknown", "hash_full": "unknown", "subject": "", "body": ""}
+
+
+# ---------------------------------------------------------------------------
+# Artifact naming
+# ---------------------------------------------------------------------------
+
+def _next_seq(fixture_dir: Path, date_str: str) -> int:
+    """Return the next 1-based run sequence number for *date_str* in *fixture_dir*."""
+    existing = list(fixture_dir.glob(f"eval_{date_str}_*.json"))
+    nums = []
+    for f in existing:
+        parts = f.stem.split("_")  # ["eval", "20260627", "001"]
+        if len(parts) == 3:
+            try:
+                nums.append(int(parts[2]))
+            except ValueError:
+                pass
+    return max(nums, default=0) + 1
+
+
+def _artifact_stem(fixture_dir: Path) -> str:
+    """Return e.g. 'eval_20260627_001' — unique per fixture folder per calendar day."""
+    date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
+    seq = _next_seq(fixture_dir, date_str)
+    return f"eval_{date_str}_{seq:03d}"
+
+
+# ---------------------------------------------------------------------------
+# OCR helpers
+# ---------------------------------------------------------------------------
 
 def _cer(ref: str, hyp: str) -> float:
     ref, hyp = ref.lower(), hyp.lower()
@@ -125,12 +163,7 @@ def _ocr_image(img_path: Path) -> tuple[str, list[dict]]:
 # ---------------------------------------------------------------------------
 
 def _annotate_image_b64(img_path: Path, tokens: list[dict]) -> str:
-    """Return base64-encoded JPEG with coloured bounding boxes overlaid.
-
-    Bboxes are in the coordinate space of the OCR pipeline (max 2000 px on the
-    longest side), so the image is resized the same way before drawing.
-    The annotated image is then scaled down to max 1000 px for the HTML report.
-    """
+    """Return a base64 JPEG with coloured bounding boxes overlaid on the image."""
     import cv2
     import numpy as np
 
@@ -138,7 +171,6 @@ def _annotate_image_b64(img_path: Path, tokens: list[dict]) -> str:
     if img is None:
         return ""
 
-    # Match the resize applied inside _ocr_image so bbox coords align.
     h, w = img.shape[:2]
     ocr_max = 2000
     if max(h, w) > ocr_max:
@@ -157,7 +189,6 @@ def _annotate_image_b64(img_path: Path, tokens: list[dict]) -> str:
             bgr = _palette_bgr(i)
             cv2.polylines(img, [pts], True, bgr, 2)
 
-            # Numbered label box at the top-left corner of the bbox.
             x = int(pts[:, 0].min())
             y = int(pts[:, 1].min())
             label = str(i + 1)
@@ -169,11 +200,9 @@ def _annotate_image_b64(img_path: Path, tokens: list[dict]) -> str:
                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA,
             )
 
-    # Scale down for the HTML report (smaller file size).
     h2, w2 = img.shape[:2]
-    display_max = 1000
-    if max(h2, w2) > display_max:
-        ds = display_max / max(h2, w2)
+    if max(h2, w2) > 1000:
+        ds = 1000 / max(h2, w2)
         img = cv2.resize(img, (int(w2 * ds), int(h2 * ds)))
 
     _, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 82])
@@ -184,7 +213,7 @@ def _annotate_image_b64(img_path: Path, tokens: list[dict]) -> str:
 # Analysis
 # ---------------------------------------------------------------------------
 
-def _explain(fixture_name: str, image_results: list[dict], mean_cer: float) -> str:
+def _explain(image_results: list[dict], mean_cer: float) -> str:
     passed = [r for r in image_results if r["passed"]]
     failed = [r for r in image_results if not r["passed"]]
 
@@ -217,16 +246,14 @@ def _explain(fixture_name: str, image_results: list[dict], mean_cer: float) -> s
         )
     if partial:
         modes.append(
-            f"partial recognition — some tokens missing or substituted "
+            f"partial recognition — tokens missing or substituted "
             f"({', '.join(r['filename'] for r in partial)})"
         )
 
     mode_str = "; ".join(modes) if modes else "undiagnosed"
-
     return (
         f"Mean CER {mean_cer:.1%} exceeds the {PASS_THRESHOLD:.0%} threshold. "
-        f"Failed: {fail_names}. "
-        f"Passed: {pass_names}. "
+        f"Failed: {fail_names}. Passed: {pass_names}. "
         f"Failure mode(s): {mode_str}."
     )
 
@@ -235,7 +262,7 @@ def _explain(fixture_name: str, image_results: list[dict], mean_cer: float) -> s
 # Per-fixture evaluation
 # ---------------------------------------------------------------------------
 
-def evaluate_fixture(fixture_dir: Path, commit: str) -> dict:
+def evaluate_fixture(fixture_dir: Path, commit_info: dict) -> dict:
     gt = _load_ground_truth(fixture_dir / "ground_truth.txt")
 
     image_results = []
@@ -260,11 +287,7 @@ def evaluate_fixture(fixture_dir: Path, commit: str) -> dict:
             "recognized": recognized,
             "token_count": len(tokens),
             "tokens": [
-                {
-                    "text": t["text"],
-                    "confidence": round(t["confidence"], 4),
-                    "bbox": t["bbox"],
-                }
+                {"text": t["text"], "confidence": round(t["confidence"], 4), "bbox": t["bbox"]}
                 for t in tokens
             ],
             "cer": round(c, 4),
@@ -275,16 +298,18 @@ def evaluate_fixture(fixture_dir: Path, commit: str) -> dict:
 
     mean_cer = total_cer / len(image_results) if image_results else 0.0
     verdict = "PASS" if mean_cer < PASS_THRESHOLD else "NEEDS IMPROVEMENT"
-    explanation = _explain(fixture_dir.name, image_results, mean_cer)
 
     return {
         "fixture": fixture_dir.name,
-        "commit": commit,
+        "commit":         commit_info["hash"],
+        "commit_full":    commit_info["hash_full"],
+        "commit_subject": commit_info["subject"],
+        "commit_body":    commit_info["body"],
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "threshold_cer": PASS_THRESHOLD,
         "mean_cer": round(mean_cer, 4),
         "verdict": verdict,
-        "explanation": explanation,
+        "explanation": _explain(image_results, mean_cer),
         "images": image_results,
     }
 
@@ -297,7 +322,7 @@ def _print_report(result: dict) -> None:
     w = 72
     print("=" * w)
     print(f"{'Fixture: ' + result['fixture']:^{w}}")
-    print(f"{'Commit: ' + result['commit']:^{w}}")
+    print(f"{'Commit: ' + result['commit'] + '  ' + result['commit_subject']:^{w}}")
     print("=" * w)
 
     for img in result["images"]:
@@ -333,24 +358,28 @@ header {
   background: #111827;
   color: #f9fafb;
   padding: 1.25rem 2rem;
-  display: flex;
-  align-items: baseline;
-  gap: 1.5rem;
 }
-header h1 { font-size: 1.25rem; font-weight: 700; }
-header .meta { font-size: 0.8rem; color: #9ca3af; font-family: monospace; }
+header h1 { font-size: 1.2rem; font-weight: 700; margin-bottom: 0.5rem; }
+.commit-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.8rem;
+  color: #9ca3af;
+}
+.commit-block .commit-subject { color: #e5e7eb; font-weight: 600; font-size: 0.85rem; }
+.commit-block .commit-hash   { font-family: monospace; color: #6b7280; font-size: 0.75rem; }
+.commit-block .commit-body   {
+  font-family: monospace; color: #6b7280; font-size: 0.75rem;
+  white-space: pre-wrap; margin-top: 0.15rem;
+}
+.commit-block .meta { color: #6b7280; }
 
 .container { max-width: 1280px; margin: 0 auto; padding: 1.5rem; }
 
-/* Summary */
 .summary {
-  border-radius: 10px;
-  padding: 1.25rem 1.5rem;
-  margin-bottom: 1.75rem;
-  border-left: 5px solid;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
+  border-radius: 10px; padding: 1.25rem 1.5rem; margin-bottom: 1.75rem;
+  border-left: 5px solid; display: flex; flex-direction: column; gap: 0.5rem;
 }
 .summary.pass { background: #f0fdf4; border-color: #22c55e; }
 .summary.fail { background: #fff7ed; border-color: #f97316; }
@@ -367,62 +396,39 @@ header .meta { font-size: 0.8rem; color: #9ca3af; font-family: monospace; }
 .threshold-note { font-size: 0.8rem; color: #6b7280; }
 .explanation { font-size: 0.875rem; color: #4b5563; line-height: 1.6; }
 
-/* CER legend */
 .cer-legend {
-  background: white;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  padding: 0.75rem 1rem;
-  margin-bottom: 1.75rem;
-  font-size: 0.8rem;
-  color: #6b7280;
+  background: white; border: 1px solid #e5e7eb; border-radius: 8px;
+  padding: 0.75rem 1rem; margin-bottom: 1.75rem;
+  font-size: 0.8rem; color: #6b7280;
 }
 .cer-legend strong { color: #374151; }
 .cer-legend .bands { display: flex; gap: 1.5rem; margin-top: 0.4rem; flex-wrap: wrap; }
 .band { display: flex; align-items: center; gap: 0.35rem; }
 .band-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
 
-/* Image cards */
 .image-card {
-  background: white;
-  border: 1px solid #e5e7eb;
-  border-radius: 10px;
-  margin-bottom: 1.5rem;
-  overflow: hidden;
+  background: white; border: 1px solid #e5e7eb; border-radius: 10px;
+  margin-bottom: 1.5rem; overflow: hidden;
 }
 .card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.6rem 1rem;
-  background: #f9fafb;
-  border-bottom: 1px solid #e5e7eb;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.6rem 1rem; background: #f9fafb; border-bottom: 1px solid #e5e7eb;
 }
 .filename { font-weight: 700; font-family: monospace; font-size: 0.9rem; }
 .card-header-right { display: flex; align-items: center; gap: 0.75rem; }
 .elapsed { font-size: 0.75rem; color: #9ca3af; }
-.cer-badge {
-  font-size: 0.8rem; font-weight: 700; padding: 0.2rem 0.6rem; border-radius: 5px;
-}
+.cer-badge { font-size: 0.8rem; font-weight: 700; padding: 0.2rem 0.6rem; border-radius: 5px; }
 .cer-badge.pass { background: #dcfce7; color: #15803d; }
 .cer-badge.fail { background: #ffedd5; color: #c2410c; }
 
 .card-body { display: flex; min-height: 0; }
-
 .image-col {
-  flex: 0 0 46%;
-  padding: 1rem;
-  border-right: 1px solid #e5e7eb;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  background: #f9fafb;
+  flex: 0 0 46%; padding: 1rem; border-right: 1px solid #e5e7eb;
+  display: flex; align-items: flex-start; justify-content: center; background: #f9fafb;
 }
 .image-col img { max-width: 100%; border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.15); }
 .image-col .no-image { color: #9ca3af; font-style: italic; font-size: 0.85rem; align-self: center; }
-
 .text-col { flex: 1; padding: 1rem; display: flex; flex-direction: column; gap: 0.9rem; overflow: auto; }
-
 .text-block label {
   display: block; font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
   letter-spacing: 0.07em; color: #9ca3af; margin-bottom: 0.3rem;
@@ -431,18 +437,15 @@ header .meta { font-size: 0.8rem; color: #9ca3af; font-family: monospace; }
 .text-expected p  { color: #111827; }
 .text-recognized p { color: #2563eb; }
 .text-recognized .empty { color: #9ca3af; font-style: italic; }
-
 .error-box {
   background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px;
   padding: 0.5rem 0.75rem; font-size: 0.8rem; color: #b91c1c; font-family: monospace;
 }
-
 .token-section label {
   display: block; font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
   letter-spacing: 0.07em; color: #9ca3af; margin-bottom: 0.4rem;
 }
 .no-tokens { font-size: 0.82rem; color: #9ca3af; font-style: italic; }
-
 .token-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
 .token-table th {
   text-align: left; padding: 0.3rem 0.5rem;
@@ -479,13 +482,11 @@ def _render_image_card(img_result: dict, fixture_dir: Path) -> str:
     passed = img_result["passed"]
     badge_cls = "pass" if passed else "fail"
     symbol = "✓" if passed else "✗"
-    cer_pct = f"{img_result['cer']:.1%}"
 
     b64 = _annotate_image_b64(fixture_dir / fname, img_result["tokens"])
     img_tag = (
         f'<img src="data:image/jpeg;base64,{b64}" alt="{_html.escape(fname)}">'
-        if b64
-        else '<span class="no-image">Image unavailable</span>'
+        if b64 else '<span class="no-image">Image unavailable</span>'
     )
 
     recognized_html = (
@@ -496,28 +497,23 @@ def _render_image_card(img_result: dict, fixture_dir: Path) -> str:
 
     error_html = (
         f'<div class="error-box">Error: {_html.escape(img_result["error"])}</div>'
-        if "error" in img_result
-        else ""
+        if "error" in img_result else ""
     )
 
     if img_result["tokens"]:
-        rows = ""
-        for i, tok in enumerate(img_result["tokens"]):
-            dot_color = _palette_hex(i)
-            cc = _conf_class(tok["confidence"])
-            rows += (
-                f"<tr>"
-                f'<td class="token-num">'
-                f'<span class="color-dot" style="background:{dot_color}"></span>{i+1}</td>'
-                f'<td class="token-text">{_html.escape(tok["text"])}</td>'
-                f'<td class="conf {cc}">{tok["confidence"]:.2f}</td>'
-                f"</tr>"
-            )
+        rows = "".join(
+            f"<tr>"
+            f'<td class="token-num">'
+            f'<span class="color-dot" style="background:{_palette_hex(i)}"></span>{i+1}</td>'
+            f'<td class="token-text">{_html.escape(tok["text"])}</td>'
+            f'<td class="conf {_conf_class(tok["confidence"])}">{tok["confidence"]:.2f}</td>'
+            f"</tr>"
+            for i, tok in enumerate(img_result["tokens"])
+        )
         token_html = (
             f'<table class="token-table">'
             f"<thead><tr><th>#</th><th>Text</th><th>Conf.</th></tr></thead>"
-            f"<tbody>{rows}</tbody>"
-            f"</table>"
+            f"<tbody>{rows}</tbody></table>"
         )
     else:
         token_html = '<span class="no-tokens">No tokens detected above confidence threshold.</span>'
@@ -528,7 +524,7 @@ def _render_image_card(img_result: dict, fixture_dir: Path) -> str:
     <span class="filename">{_html.escape(fname)}</span>
     <div class="card-header-right">
       <span class="elapsed">{img_result['elapsed_s']:.2f}s</span>
-      <span class="cer-badge {badge_cls}">{symbol} CER {cer_pct}</span>
+      <span class="cer-badge {badge_cls}">{symbol} CER {img_result['cer']:.1%}</span>
     </div>
   </div>
   <div class="card-body">
@@ -552,11 +548,16 @@ def _render_image_card(img_result: dict, fixture_dir: Path) -> str:
 </div>"""
 
 
-def _render_html(result: dict, fixture_dir: Path) -> str:
+def _render_html(result: dict, fixture_dir: Path, stem: str) -> str:
     passed = result["verdict"] == "PASS"
-    summary_cls = "pass" if passed else "fail"
-    mean_cer_pct = f"{result['mean_cer']:.1%}"
+    cls = "pass" if passed else "fail"
     ts = result["timestamp"].replace("T", " ").replace("+00:00", " UTC")
+
+    body_html = ""
+    if result["commit_body"]:
+        body_html = (
+            f'<span class="commit-body">{_html.escape(result["commit_body"])}</span>'
+        )
 
     image_cards = "\n".join(
         _render_image_card(img, fixture_dir) for img in result["images"]
@@ -567,21 +568,26 @@ def _render_html(result: dict, fixture_dir: Path) -> str:
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>OCR Eval — {_html.escape(result['fixture'])} @ {_html.escape(result['commit'])}</title>
+  <title>OCR Eval — {_html.escape(result['fixture'])} — {_html.escape(stem)}</title>
   <style>{_CSS}</style>
 </head>
 <body>
 <header>
   <h1>OCR Evaluation &mdash; {_html.escape(result['fixture'])}</h1>
-  <span class="meta">commit {_html.escape(result['commit'])} &nbsp;·&nbsp; {_html.escape(ts)}</span>
+  <div class="commit-block">
+    <span class="commit-subject">{_html.escape(result['commit_subject'])}</span>
+    <span class="commit-hash">{_html.escape(result['commit_full'])}</span>
+    {body_html}
+    <span class="meta">{_html.escape(stem)} &nbsp;·&nbsp; {_html.escape(ts)}</span>
+  </div>
 </header>
 
 <div class="container">
 
-  <div class="summary {summary_cls}">
+  <div class="summary {cls}">
     <div class="summary-top">
-      <span class="verdict-badge {summary_cls}">{_html.escape(result['verdict'])}</span>
-      <span class="mean-cer {summary_cls}">{mean_cer_pct}</span>
+      <span class="verdict-badge {cls}">{_html.escape(result['verdict'])}</span>
+      <span class="mean-cer {cls}">{result['mean_cer']:.1%}</span>
       <span class="threshold-note">mean CER &nbsp;(threshold &lt; {result['threshold_cer']:.0%})</span>
     </div>
     <p class="explanation">{_html.escape(result['explanation'])}</p>
@@ -589,8 +595,7 @@ def _render_html(result: dict, fixture_dir: Path) -> str:
 
   <div class="cer-legend">
     <strong>Character Error Rate (CER)</strong> — edit distance between recognised and
-    expected text, divided by the length of the expected text.
-    Lower is better; 0% = perfect match.
+    expected text, divided by the length of the expected text. Lower is better; 0% = perfect match.
     <div class="bands">
       <span class="band"><span class="band-dot" style="background:#16a34a"></span>&lt; 10% excellent</span>
       <span class="band"><span class="band-dot" style="background:#ca8a04"></span>10–30% acceptable</span>
@@ -611,16 +616,16 @@ def _render_html(result: dict, fixture_dir: Path) -> str:
 # Artifact writers
 # ---------------------------------------------------------------------------
 
-def _save_artifact(fixture_dir: Path, result: dict) -> Path:
-    out_path = fixture_dir / f"eval_{result['commit']}.json"
+def _save_artifact(fixture_dir: Path, result: dict, stem: str) -> Path:
+    out_path = fixture_dir / f"{stem}.json"
     with open(out_path, "w") as f:
         json.dump(result, f, indent=2)
     return out_path
 
 
-def _save_html(fixture_dir: Path, result: dict) -> Path:
-    out_path = fixture_dir / f"eval_{result['commit']}.html"
-    out_path.write_text(_render_html(result, fixture_dir), encoding="utf-8")
+def _save_html(fixture_dir: Path, result: dict, stem: str) -> Path:
+    out_path = fixture_dir / f"{stem}.html"
+    out_path.write_text(_render_html(result, fixture_dir, stem), encoding="utf-8")
     return out_path
 
 
@@ -641,7 +646,7 @@ def main(argv=None):
     print("Initialising PaddleOCR (loading cached weights)…", file=sys.stderr)
     engine_mod._ocr = PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
 
-    commit = _git_commit()
+    commit_info = _git_commit_info()
 
     if args.fixture:
         dirs = [FIXTURE_ROOT / args.fixture]
@@ -652,11 +657,12 @@ def main(argv=None):
         )
 
     for fixture_dir in dirs:
-        result = evaluate_fixture(fixture_dir, commit)
+        stem = _artifact_stem(fixture_dir)          # e.g. eval_20260627_001
+        result = evaluate_fixture(fixture_dir, commit_info)
         _print_report(result)
-        json_path = _save_artifact(fixture_dir, result)
-        html_path = _save_html(fixture_dir, result)
-        print(f"\nArtifacts saved →")
+        json_path = _save_artifact(fixture_dir, result, stem)
+        html_path = _save_html(fixture_dir, result, stem)
+        print(f"\nArtifacts saved ({stem}) →")
         print(f"  JSON : {json_path.relative_to(_PROJECT_ROOT)}")
         print(f"  HTML : {html_path.relative_to(_PROJECT_ROOT)}\n")
 
