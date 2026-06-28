@@ -64,22 +64,31 @@ def _resolve_rotation_ambiguity(img: np.ndarray, angle_a: int, angle_b: int) -> 
     return best_angle
 
 
-def recognize(img: np.ndarray, conf_threshold: float = 0.6, lang: str = "en") -> list[dict]:
-    """Return OCR tokens sorted top-to-bottom, left-to-right, above conf_threshold."""
-    from src.preprocess import orientation_scores, _ORIENT_CODES
+def pick_orientation(img: np.ndarray) -> int:
+    """Return the clockwise rotation angle to apply to make text upright.
 
-    # Determine orientation from projection-profile variance.
+    Combines projection-profile variance with an OCR-confidence tiebreaker for
+    the 0°/180° and 90°/270° symmetric pairs that variance alone cannot separate.
+    """
+    from src.preprocess import orientation_scores
+
     scores = orientation_scores(img)
     sorted_angles = sorted(scores, key=scores.__getitem__, reverse=True)
     best, second = sorted_angles[0], sorted_angles[1]
 
-    # 0°/180° and 90°/270° are symmetric under row-reversal, so their variance
-    # scores are always equal.  When those two tie for first place, use a quick
-    # OCR pass (without angle correction) to pick the truly upright rotation.
     if abs(best - second) == 180 and scores[best] > 0:
         rel_gap = (scores[best] - scores[second]) / scores[best]
         if rel_gap < 0.02:
             best = _resolve_rotation_ambiguity(img, best, second)
+
+    return best
+
+
+def recognize(img: np.ndarray, conf_threshold: float = 0.6, lang: str = "en") -> list[dict]:
+    """Return OCR tokens sorted top-to-bottom, left-to-right, above conf_threshold."""
+    from src.preprocess import _ORIENT_CODES
+
+    best = pick_orientation(img)
 
     if best != 0:
         img = cv2.rotate(img, _ORIENT_CODES[best])

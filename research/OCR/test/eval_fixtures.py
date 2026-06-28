@@ -170,7 +170,8 @@ def _annotate_image_b64(img_path: Path, tokens: list[dict]) -> str:
     """
     import cv2
     import numpy as np
-    from src.preprocess import correct_orientation
+    from src.ocr_engine import pick_orientation
+    from src.preprocess import _ORIENT_CODES
 
     img = cv2.imread(str(img_path))
     if img is None:
@@ -182,9 +183,11 @@ def _annotate_image_b64(img_path: Path, tokens: list[dict]) -> str:
         scale = ocr_max / max(h, w)
         img = cv2.resize(img, (int(w * scale), int(h * scale)))
 
-    # Apply the same orientation correction the OCR pipeline applies so the
-    # token bounding boxes (which are in corrected-image coordinates) align.
-    img = correct_orientation(img)
+    # Use the same orientation logic as recognize() (variance + OCR tiebreaker)
+    # so bbox coordinates align with the image shown.
+    angle = pick_orientation(img)
+    if angle != 0:
+        img = cv2.rotate(img, _ORIENT_CODES[angle])
 
     if tokens:
         overlay = img.copy()
