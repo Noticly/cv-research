@@ -20,6 +20,7 @@ import base64
 import html as _html
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -33,7 +34,8 @@ _PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 
 FIXTURE_ROOT = _PROJECT_ROOT / "test" / "fixtures"
-PASS_THRESHOLD = 0.30
+PASS_THRESHOLD = 0.30      # CER threshold (lower is better)
+KP_PASS_THRESHOLD = 0.70   # key-phrase recall threshold (higher is better)
 
 # RGB palette shared between image annotation and HTML token colours.
 _PALETTE: list[tuple[int, int, int]] = [
@@ -124,6 +126,40 @@ def _cer(ref: str, hyp: str) -> float:
         for j in range(1, h + 1):
             dp[j] = prev[j - 1] if ref[i - 1] == hyp[j - 1] else 1 + min(prev[j], dp[j - 1], prev[j - 1])
     return dp[h] / r
+
+
+def _normalize_text(s: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9 ]", "", s.lower())).strip()
+
+
+def _phrase_found(phrase: str, recognized: str) -> bool:
+    """Return True if *phrase* is present in *recognized* (fuzzy, order-insensitive)."""
+    p = _normalize_text(phrase)
+    r = _normalize_text(recognized)
+    if not p:
+        return True
+    # Exact substring (spaces preserved)
+    if p in r:
+        return True
+    # No-space substring — handles merged tokens like "STATEOFFEAR"
+    if p.replace(" ", "") in r.replace(" ", ""):
+        return True
+    # Word-overlap: ≥ 75 % of phrase words appear in recognised word set
+    p_words = p.split()
+    r_words = set(r.split())
+    if p_words and sum(1 for w in p_words if w in r_words) / len(p_words) >= 0.75:
+        return True
+    return False
+
+
+def _key_phrase_eval(expected: str, recognized: str) -> tuple[float, list[dict]]:
+    """Parse |-delimited key phrases; return (recall_0_to_1, per-phrase results)."""
+    phrases = [ph.strip() for ph in expected.split("|") if ph.strip()]
+    if not phrases:
+        return 0.0, []
+    details = [{"phrase": ph, "found": _phrase_found(ph, recognized)} for ph in phrases]
+    recall = sum(1 for d in details if d["found"]) / len(details)
+    return recall, details
 
 
 def _load_ground_truth(gt_path: Path) -> dict[str, str]:
@@ -225,32 +261,40 @@ def _annotate_image_b64(img_path: Path, tokens: list[dict]) -> str:
 # Analysis
 # ---------------------------------------------------------------------------
 
+def _img_score_str(r: dict) -> str:
+    if r["mode"] == "key_phrase":
+        return f"recall {r['kp_recall']:.0%}"
+    return f"CER {r['cer']:.1%}"
+
+
 def _explain(image_results: list[dict], mean_cer: float) -> str:
     passed = [r for r in image_results if r["passed"]]
     failed = [r for r in image_results if not r["passed"]]
 
     if not failed:
-        best = min(image_results, key=lambda r: r["cer"])
-        worst = max(image_results, key=lambda r: r["cer"])
         return (
-            f"All {len(image_results)} images passed the {PASS_THRESHOLD:.0%} CER threshold. "
-            f"Best: {best['filename']} ({best['cer']:.1%}). "
-            f"Worst: {worst['filename']} ({worst['cer']:.1%})."
+            f"All {len(image_results)} images passed. "
+            + " ".join(f"{r['filename']}: {_img_score_str(r)}." for r in image_results)
         )
 
-    fail_names = ", ".join(f"{r['filename']} ({r['cer']:.1%})" for r in failed)
+    fail_names = ", ".join(f"{r['filename']} ({_img_score_str(r)})" for r in failed)
     pass_names = (
-        ", ".join(f"{r['filename']} ({r['cer']:.1%})" for r in passed)
+        ", ".join(f"{r['filename']} ({_img_score_str(r)})" for r in passed)
         if passed else "none"
     )
 
     modes = []
     empty = [r for r in failed if r["token_count"] == 0]
-    order_errors = [r for r in failed if r["token_count"] > 0 and r["cer"] > 0.60]
-    partial = [r for r in failed if r["token_count"] > 0 and r["cer"] <= 0.60]
+    kp_failed = [r for r in failed if r["mode"] == "key_phrase" and r["token_count"] > 0]
+    order_errors = [r for r in failed if r["mode"] == "cer" and r["token_count"] > 0 and r["cer"] > 0.60]
+    partial = [r for r in failed if r["mode"] == "cer" and r["token_count"] > 0 and r["cer"] <= 0.60]
 
     if empty:
         modes.append(f"no tokens detected ({', '.join(r['filename'] for r in empty)})")
+    if kp_failed:
+        modes.append(
+            f"key phrases missing from output ({', '.join(r['filename'] for r in kp_failed)})"
+        )
     if order_errors:
         modes.append(
             "high CER despite tokens detected — likely reading-order errors on "
@@ -264,7 +308,6 @@ def _explain(image_results: list[dict], mean_cer: float) -> str:
 
     mode_str = "; ".join(modes) if modes else "undiagnosed"
     return (
-        f"Mean CER {mean_cer:.1%} exceeds the {PASS_THRESHOLD:.0%} threshold. "
         f"Failed: {fail_names}. Passed: {pass_names}. "
         f"Failure mode(s): {mode_str}."
     )
@@ -279,6 +322,7 @@ def evaluate_fixture(fixture_dir: Path, commit_info: dict) -> dict:
 
     image_results = []
     total_cer = 0.0
+    pass_count = 0
 
     for fname, expected in gt.items():
         img_path = fixture_dir / fname
@@ -290,10 +334,11 @@ def evaluate_fixture(fixture_dir: Path, commit_info: dict) -> dict:
             recognized, tokens, error = "", [], str(exc)
         elapsed = time.perf_counter() - t0
 
-        c = _cer(expected, recognized)
+        kp_mode = "|" in expected
+        c = _cer(expected.replace("|", " "), recognized)
         total_cer += c
 
-        image_results.append({
+        entry: dict = {
             "filename": fname,
             "expected": expected,
             "recognized": recognized,
@@ -302,14 +347,26 @@ def evaluate_fixture(fixture_dir: Path, commit_info: dict) -> dict:
                 {"text": t["text"], "confidence": round(t["confidence"], 4), "bbox": t["bbox"]}
                 for t in tokens
             ],
+            "mode": "key_phrase" if kp_mode else "cer",
             "cer": round(c, 4),
-            "passed": c < PASS_THRESHOLD,
             "elapsed_s": round(elapsed, 3),
             **({"error": error} if error else {}),
-        })
+        }
+
+        if kp_mode:
+            kp_recall, kp_phrases = _key_phrase_eval(expected, recognized)
+            entry["kp_recall"] = round(kp_recall, 4)
+            entry["kp_phrases"] = kp_phrases
+            entry["passed"] = kp_recall >= KP_PASS_THRESHOLD
+        else:
+            entry["passed"] = c < PASS_THRESHOLD
+
+        if entry["passed"]:
+            pass_count += 1
+        image_results.append(entry)
 
     mean_cer = total_cer / len(image_results) if image_results else 0.0
-    verdict = "PASS" if mean_cer < PASS_THRESHOLD else "NEEDS IMPROVEMENT"
+    verdict = "PASS" if pass_count == len(image_results) else "NEEDS IMPROVEMENT"
 
     return {
         "fixture": fixture_dir.name,
@@ -346,7 +403,13 @@ def _print_report(result: dict) -> None:
         if img["tokens"]:
             for tok in img["tokens"]:
                 print(f"               [{tok['confidence']:.2f}] {tok['text']!r}")
-        print(f"  CER        : {img['cer']:.1%}  {'✓ PASS' if img['passed'] else '✗ FAIL'}")
+        if img["mode"] == "key_phrase":
+            print(f"  KP Recall  : {img['kp_recall']:.0%}  {'✓ PASS' if img['passed'] else '✗ FAIL'}")
+            for kp in img.get("kp_phrases", []):
+                sym = "  ✓" if kp["found"] else "  ✗"
+                print(f"  {sym}  {kp['phrase']!r}")
+        else:
+            print(f"  CER        : {img['cer']:.1%}  {'✓ PASS' if img['passed'] else '✗ FAIL'}")
         print(f"  Elapsed    : {img['elapsed_s']:.2f}s")
         if "error" in img:
             print(f"  Error      : {img['error']}")
@@ -474,6 +537,15 @@ header h1 { font-size: 1.2rem; font-weight: 700; margin-bottom: 0.5rem; }
 .conf-med  { color: #ca8a04; }
 .conf-low  { color: #dc2626; }
 
+.kp-section label {
+  display: block; font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.07em; color: #9ca3af; margin-bottom: 0.4rem;
+}
+.kp-list { list-style: none; display: flex; flex-direction: column; gap: 0.25rem; }
+.kp-list li { font-size: 0.82rem; font-family: monospace; }
+.kp-found { color: #16a34a; }
+.kp-miss  { color: #dc2626; }
+
 @media (max-width: 800px) {
   .card-body { flex-direction: column; }
   .image-col { flex: none; border-right: none; border-bottom: 1px solid #e5e7eb; }
@@ -512,6 +584,27 @@ def _render_image_card(img_result: dict, fixture_dir: Path) -> str:
         if "error" in img_result else ""
     )
 
+    # Key-phrase checklist (only in key_phrase mode)
+    kp_html = ""
+    if img_result.get("mode") == "key_phrase" and img_result.get("kp_phrases"):
+        rows = "".join(
+            f'<li class="kp-{"found" if kp["found"] else "miss"}">'
+            f'{"✓" if kp["found"] else "✗"} {_html.escape(kp["phrase"])}</li>'
+            for kp in img_result["kp_phrases"]
+        )
+        kp_html = (
+            f'<div class="kp-section">'
+            f'<label>Key Phrases ({img_result["kp_recall"]:.0%} found)</label>'
+            f'<ul class="kp-list">{rows}</ul>'
+            f'</div>'
+        )
+
+    # Badge shows KP recall or CER depending on mode
+    if img_result.get("mode") == "key_phrase":
+        badge_label = f"{symbol} Recall {img_result['kp_recall']:.0%}"
+    else:
+        badge_label = f"{symbol} CER {img_result['cer']:.1%}"
+
     if img_result["tokens"]:
         rows = "".join(
             f"<tr>"
@@ -536,7 +629,7 @@ def _render_image_card(img_result: dict, fixture_dir: Path) -> str:
     <span class="filename">{_html.escape(fname)}</span>
     <div class="card-header-right">
       <span class="elapsed">{img_result['elapsed_s']:.2f}s</span>
-      <span class="cer-badge {badge_cls}">{symbol} CER {img_result['cer']:.1%}</span>
+      <span class="cer-badge {badge_cls}">{badge_label}</span>
     </div>
   </div>
   <div class="card-body">
@@ -551,6 +644,7 @@ def _render_image_card(img_result: dict, fixture_dir: Path) -> str:
         {recognized_html}
       </div>
       {error_html}
+      {kp_html}
       <div class="token-section">
         <label>Tokens ({img_result['token_count']} detected)</label>
         {token_html}
