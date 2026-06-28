@@ -465,21 +465,12 @@ header h1 { font-size: 1.2rem; font-weight: 700; margin-bottom: 0.5rem; }
 }
 .verdict-badge.pass { background: #22c55e; color: #fff; }
 .verdict-badge.fail { background: #f97316; color: #fff; }
-.mean-cer { font-size: 2rem; font-weight: 800; line-height: 1; }
-.mean-cer.pass { color: #16a34a; }
-.mean-cer.fail { color: #ea580c; }
+.pass-count { font-size: 2rem; font-weight: 800; line-height: 1; }
+.pass-count.pass { color: #16a34a; }
+.pass-count.fail { color: #ea580c; }
 .threshold-note { font-size: 0.8rem; color: #6b7280; }
 .explanation { font-size: 0.875rem; color: #4b5563; line-height: 1.6; }
 
-.cer-legend {
-  background: white; border: 1px solid #e5e7eb; border-radius: 8px;
-  padding: 0.75rem 1rem; margin-bottom: 1.75rem;
-  font-size: 0.8rem; color: #6b7280;
-}
-.cer-legend strong { color: #374151; }
-.cer-legend .bands { display: flex; gap: 1.5rem; margin-top: 0.4rem; flex-wrap: wrap; }
-.band { display: flex; align-items: center; gap: 0.35rem; }
-.band-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
 
 .image-card {
   background: white; border: 1px solid #e5e7eb; border-radius: 10px;
@@ -658,6 +649,8 @@ def _render_html(result: dict, fixture_dir: Path, stem: str) -> str:
     passed = result["verdict"] == "PASS"
     cls = "pass" if passed else "fail"
     ts = result["timestamp"].replace("T", " ").replace("+00:00", " UTC")
+    total_count = len(result["images"])
+    pass_count = sum(1 for img in result["images"] if img["passed"])
 
     body_html = ""
     if result["commit_body"]:
@@ -693,22 +686,10 @@ def _render_html(result: dict, fixture_dir: Path, stem: str) -> str:
   <div class="summary {cls}">
     <div class="summary-top">
       <span class="verdict-badge {cls}">{_html.escape(result['verdict'])}</span>
-      <span class="mean-cer {cls}">{result['mean_cer']:.1%}</span>
-      <span class="threshold-note">mean CER &nbsp;(threshold &lt; {result['threshold_cer']:.0%})</span>
+      <span class="pass-count {cls}">{pass_count} / {total_count}</span>
+      <span class="threshold-note">test cases passed</span>
     </div>
     <p class="explanation">{_html.escape(result['explanation'])}</p>
-  </div>
-
-  <div class="cer-legend">
-    <strong>Character Error Rate (CER)</strong> — edit distance between recognised and
-    expected text, divided by the length of the expected text. Lower is better; 0% = perfect match.
-    <div class="bands">
-      <span class="band"><span class="band-dot" style="background:#16a34a"></span>&lt; 10% excellent</span>
-      <span class="band"><span class="band-dot" style="background:#ca8a04"></span>10–30% acceptable</span>
-      <span class="band"><span class="band-dot" style="background:#ea580c"></span>30–60% poor</span>
-      <span class="band"><span class="band-dot" style="background:#dc2626"></span>&gt; 60% failing</span>
-      <span class="band"><span class="band-dot" style="background:#7c3aed"></span>&gt; 100% hypothesis longer than reference</span>
-    </div>
   </div>
 
   {image_cards}
