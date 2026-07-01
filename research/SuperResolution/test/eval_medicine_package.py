@@ -14,7 +14,7 @@ BASE_DOWNSCALE before evaluation -- these are full 12MP phone photos, and at
 CROP_SIZE alone the "ground truth" is still sharp enough that x2-x4 SR
 barely looks different from the original. Shrinking the reference first
 means the same nominal scale factors correspond to a harder, more visible
-reconstruction problem, and lets scale go up to x8 to widen the comparison.
+reconstruction problem.
 
 LR is synthesised with PIL's BICUBIC filter (via src.benchmark._downscale),
 matching the degradation convention the pretrained checkpoints were trained
@@ -42,15 +42,15 @@ FIXTURE_DIR = _PROJECT_ROOT / "test" / "fixtures" / "medicine_package"
 WEIGHTS_DIR = _PROJECT_ROOT / "src" / "weights"
 
 CROP_SIZE = (800, 600)  # (w, h) centred crop -- see module docstring
-BASE_DOWNSCALE = 2  # shrink the crop by this factor before using it as ground truth
+BASE_DOWNSCALE = 4  # shrink the crop by this factor before using it as ground truth
 
-# ESPCN has no pretrained checkpoint above x3 upstream (see
-# src/convert_pretrained.py), so x8 is bilinear/adaptive-sharpen baseline only.
 MODEL_SPECS = [
     ModelSpec("fsrcnn_x2", "fsrcnn", 2, str(WEIGHTS_DIR / "fsrcnn_x2_pretrained.pt")),
+    ModelSpec("fsrcnn_x3", "fsrcnn", 3, str(WEIGHTS_DIR / "fsrcnn_x3_pretrained.pt")),
+    ModelSpec("espcn_x3", "espcn", 3, str(WEIGHTS_DIR / "espcn_x3_pretrained.pt")),
     ModelSpec("fsrcnn_x4", "fsrcnn", 4, str(WEIGHTS_DIR / "fsrcnn_x4_pretrained.pt")),
 ]
-BASELINE_ONLY_SCALES = [8]
+BASELINE_ONLY_SCALES = []
 
 # Method display order within a card, and which ones count as "SR-based" for
 # the improved-over-bilinear verdict.
