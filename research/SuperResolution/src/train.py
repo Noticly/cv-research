@@ -78,7 +78,7 @@ def psnr(pred: np.ndarray, target: np.ndarray) -> float:
     mse = np.mean((pred.astype(np.float64) - target.astype(np.float64)) ** 2)
     if mse == 0:
         return float("inf")
-    return 20 * np.log10(255.0) - 10 * np.log10(mse)
+    return float(20 * np.log10(255.0) - 10 * np.log10(mse))
 
 
 def train(

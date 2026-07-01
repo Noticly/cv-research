@@ -88,10 +88,41 @@ python -m src.export --weights src/weights/espcn_x4.pt --arch espcn --scale 4 \
 
 ## Benchmark vs. bilinear baseline
 
+Each `--models` entry is `label:arch:scale:weights_path`, so different
+labels can share an arch at different scales or share a scale across archs
+in a single combined report:
+
 ```bash
-python -m src.benchmark --hr-dir test/fixtures/hr_crops --scale 4 \
-    --models espcn=src/weights/espcn_x4.pt --report docs/benchmark_report.md
+python -m src.benchmark --hr-dir test/fixtures/medicine_package \
+    --models fsrcnn_x2:fsrcnn:2:src/weights/fsrcnn_x2_pretrained.pt \
+             fsrcnn_x3:fsrcnn:3:src/weights/fsrcnn_x3_pretrained.pt \
+             espcn_x3:espcn:3:src/weights/espcn_x3_pretrained.pt \
+             fsrcnn_x4:fsrcnn:4:src/weights/fsrcnn_x4_pretrained.pt \
+    --report docs/benchmark_report.md
 ```
+
+LR is synthesised with PIL's bicubic filter (not OpenCV's) to match the
+pretrained checkpoints' training convention — see `docs/algorithm_readme.md`
+§2.5.
+
+## HTML eval report
+
+`test/eval_medicine_package.py` runs the same benchmark against the
+`test/fixtures/medicine_package/` photos (centre-cropped, since these are
+full 12MP phone photos and the actual use case is zooming into one region)
+and writes a versioned, self-contained HTML+JSON report — the same
+convention used by `research/OCR` and `research/ObjectDetection`'s eval
+harnesses:
+
+```bash
+python test/eval_medicine_package.py
+# -> test/fixtures/medicine_package/eval_<YYYYMMDD>_<NNN>.{html,json}
+```
+
+Each card shows the ground-truth crop alongside every method's output
+(bilinear, adaptive-sharpen, each pretrained model, and its hybrid variant)
+with PSNR/SSIM/latency, and is marked "Improved"/"No improvement" depending
+on whether the best SR/hybrid method beat bilinear PSNR.
 
 ## Environment variables
 
