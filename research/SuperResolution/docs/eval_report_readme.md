@@ -47,6 +47,36 @@ ESPCN's public pretrained checkpoint only exists at ×3 upstream (not ×2/×4),
 so it appears alongside `fsrcnn_x3` in the ×3 group, while ×2 and ×4 only
 have an FSRCNN entry.
 
+## What "ground truth" actually is (and isn't)
+
+PSNR/SSIM are computed against the **downscaled reference** described above
+(the 200×150 image, after the `CROP_SIZE` crop and `BASE_DOWNSCALE` shrink) —
+**not** against the 800×600 crop, and not against the original ~4032×3024
+photo. Concretely, `test/eval_medicine_package.py` only ever writes the
+already-shrunk 200×150 image to the temp directory that `src/benchmark.py`'s
+`evaluate()` reads; the original photo and the 800×600 crop are discarded
+after that point and never touched again.
+
+This matters because the 200×150 reference is itself already a lossy,
+blurred version of reality — whatever fine detail existed in the original
+photo but got thrown away by the ×4 `BASE_DOWNSCALE` step is **not being
+tested for recovery at all**. The PSNR/SSIM numbers measure how well each
+method reconstructs *that intermediate reference*, not fidelity to the true
+original scene. Two consequences:
+
+- Numbers from different `BASE_DOWNSCALE` settings aren't comparable to each
+  other — e.g. the `BASE_DOWNSCALE=2` runs (`eval_20260701_002`/`_003`/`_004`,
+  400×300 reference) and the `BASE_DOWNSCALE=4` runs (`eval_20260701_005`
+  onward, 200×150 reference) use a different ground truth, so a ×4 PSNR from
+  one isn't directly comparable to a ×4 PSNR from the other, even though both
+  are labeled "×4."
+- A higher `BASE_DOWNSCALE` makes the SR-vs-bilinear gap more visible (per
+  the earlier request that led to this change) precisely because it's
+  measuring reconstruction against a reference that's already missing detail
+  the original photo had — it's a deliberate tradeoff between "visible
+  difference in the report" and "how close to the true original scene," not
+  a free improvement in measurement fidelity.
+
 ## Report layout
 
 **Header (dark bar at top)**
