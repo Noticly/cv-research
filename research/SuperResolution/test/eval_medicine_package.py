@@ -9,9 +9,12 @@ Writes eval_<YYYYMMDD>_<NNN>.json and .html to test/fixtures/medicine_package/,
 where NNN is the 1-based sequence number of runs on that calendar date in
 that folder.
 
-Each source photo is centre-cropped to CROP_SIZE before evaluation -- these
-are full 12MP phone photos, and the pipeline's actual use case is zooming
-into one small region, not super-resolving an entire multi-megapixel photo.
+Each source photo is centre-cropped to CROP_SIZE, then downscaled by
+BASE_DOWNSCALE before evaluation -- these are full 12MP phone photos, and at
+CROP_SIZE alone the "ground truth" is still sharp enough that x2-x4 SR
+barely looks different from the original. Shrinking the reference first
+means the same nominal scale factors correspond to a harder, more visible
+reconstruction problem, and lets scale go up to x8 to widen the comparison.
 
 LR is synthesised with PIL's BICUBIC filter (via src.benchmark._downscale),
 matching the degradation convention the pretrained checkpoints were trained
@@ -32,19 +35,22 @@ import cv2
 _PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 
-from src.benchmark import ModelSpec, evaluate, load_models
+from src.benchmark import ModelSpec, _downscale, evaluate, load_models, ssim
+from src.train import psnr
 
 FIXTURE_DIR = _PROJECT_ROOT / "test" / "fixtures" / "medicine_package"
 WEIGHTS_DIR = _PROJECT_ROOT / "src" / "weights"
 
 CROP_SIZE = (800, 600)  # (w, h) centred crop -- see module docstring
+BASE_DOWNSCALE = 2  # shrink the crop by this factor before using it as ground truth
 
+# ESPCN has no pretrained checkpoint above x3 upstream (see
+# src/convert_pretrained.py), so x8 is bilinear/adaptive-sharpen baseline only.
 MODEL_SPECS = [
     ModelSpec("fsrcnn_x2", "fsrcnn", 2, str(WEIGHTS_DIR / "fsrcnn_x2_pretrained.pt")),
-    ModelSpec("fsrcnn_x3", "fsrcnn", 3, str(WEIGHTS_DIR / "fsrcnn_x3_pretrained.pt")),
-    ModelSpec("espcn_x3", "espcn", 3, str(WEIGHTS_DIR / "espcn_x3_pretrained.pt")),
     ModelSpec("fsrcnn_x4", "fsrcnn", 4, str(WEIGHTS_DIR / "fsrcnn_x4_pretrained.pt")),
 ]
+BASELINE_ONLY_SCALES = [8]
 
 # Method display order within a card, and which ones count as "SR-based" for
 # the improved-over-bilinear verdict.
@@ -98,7 +104,8 @@ def _prepare_cropped_fixtures(tmp_dir: Path) -> list[str]:
         if img is None:
             continue
         cropped = _center_crop(img, CROP_SIZE)
-        cv2.imwrite(str(tmp_dir / path.name), cropped)
+        reference = _downscale(cropped, BASE_DOWNSCALE)
+        cv2.imwrite(str(tmp_dir / path.name), reference)
         names.append(path.name)
     return names
 
@@ -114,9 +121,14 @@ def _group_by_card(results: list[dict]) -> dict:
     return cards
 
 
-def _card_verdict(rows: list[dict]) -> tuple[bool, float, str]:
+def _card_verdict(rows: list[dict]) -> tuple[bool, float, str] | None:
+    """Returns (improved, baseline_psnr, best_method), or None if this card has
+    no SR model to compare (a baseline-only scale, e.g. x8 -- no pretrained
+    checkpoint exists there, see BASELINE_ONLY_SCALES)."""
     baseline = next(r for r in rows if r["method"].startswith("bilinear_x"))
     sr_rows = [r for r in rows if not r["method"].startswith(_BASELINE_PREFIXES)]
+    if not sr_rows:
+        return None
     best = max(sr_rows, key=lambda r: r["psnr"])
     return bool(best["psnr"] > baseline["psnr"]), baseline["psnr"], best["method"]
 
@@ -128,9 +140,15 @@ def _card_verdict(rows: list[dict]) -> tuple[bool, float, str]:
 def _build_json(run_id: str, commit: dict, ts: str, cards: dict) -> dict:
     card_summaries = []
     improved = 0
+    scored = 0
     for (image, scale), rows in sorted(cards.items()):
-        is_improved, baseline_psnr, best_method = _card_verdict(rows)
-        improved += int(is_improved)
+        verdict = _card_verdict(rows)
+        if verdict is not None:
+            is_improved, _, best_method = verdict
+            improved += int(is_improved)
+            scored += 1
+        else:
+            is_improved, best_method = None, None
         card_summaries.append(
             {
                 "image": image,
@@ -144,14 +162,14 @@ def _build_json(run_id: str, commit: dict, ts: str, cards: dict) -> dict:
             }
         )
 
-    total = len(card_summaries)
     return {
         "fixture": "medicine_package",
         **commit,
         "timestamp": ts,
-        "total": total,
+        "total": scored,
         "improved": improved,
-        "verdict": "PASS" if improved == total else "NEEDS IMPROVEMENT",
+        "baseline_only_cards": len(card_summaries) - scored,
+        "verdict": "PASS" if improved == scored else "NEEDS IMPROVEMENT",
         "cards": card_summaries,
     }
 
@@ -203,6 +221,7 @@ header h1 { font-size: 1.2rem; font-weight: 700; margin-bottom: 0.5rem; }
 .match-badge { font-size: 0.75rem; font-weight: 700; padding: 0.2rem 0.6rem; border-radius: 5px; }
 .match-badge.yes { background: #dcfce7; color: #15803d; }
 .match-badge.no  { background: #ffedd5; color: #c2410c; }
+.match-badge.na  { background: #e5e7eb; color: #4b5563; }
 
 .card-body { padding: 1rem; }
 .filmstrip { display: flex; gap: 0.75rem; overflow-x: auto; padding-bottom: 0.75rem; }
@@ -234,13 +253,24 @@ def _thumbnail(img, width=200, interpolation=cv2.INTER_AREA):
 
 def _render_card(image: str, scale: int, rows: list[dict]) -> str:
     h = _html.escape
-    is_improved, baseline_psnr, best_method = _card_verdict(rows)
-    match_cls = "yes" if is_improved else "no"
-    match_text = "Improved" if is_improved else "No improvement"
+    verdict = _card_verdict(rows)
+    if verdict is not None:
+        is_improved, _, best_method = verdict
+        match_cls = "yes" if is_improved else "no"
+        match_text = "Improved" if is_improved else "No improvement"
+    else:
+        best_method = None
+        match_cls, match_text = "na", "Baseline only (no pretrained model at this scale)"
 
     hr = rows[0]["hr"]
     lr = rows[0]["lr"]
+    hh, hw = hr.shape[:2]
     lh, lw = lr.shape[:2]
+
+    # Nearest-neighbor upscale of the LR input: the crudest possible
+    # reconstruction, quantifying how much detail SR/bilinear actually recover.
+    nn_full = cv2.resize(lr, (hw, hh), interpolation=cv2.INTER_NEAREST)
+    nn_psnr, nn_ssim = psnr(nn_full, hr), ssim(nn_full, hr)
 
     lines = [
         "",
@@ -251,8 +281,8 @@ def _render_card(image: str, scale: int, rows: list[dict]) -> str:
         "    </div>",
         '    <div class="card-body">',
         '      <div class="filmstrip">',
-        f'        <div class="thumb baseline"><img src="data:image/jpeg;base64,{_b64_jpeg(_thumbnail(hr))}" alt="ground truth"><div class="caption"><span class="method-name">ground truth</span></div></div>',
-        f'        <div class="thumb baseline"><img src="data:image/jpeg;base64,{_b64_jpeg(_thumbnail(lr, interpolation=cv2.INTER_NEAREST))}" alt="low-res input (before)"><div class="caption"><span class="method-name">low-res input</span><span class="metric">{lw}&times;{lh} &mdash; before SR</span></div></div>',
+        f'        <div class="thumb baseline"><img src="data:image/jpeg;base64,{_b64_jpeg(_thumbnail(hr))}" alt="ground truth"><div class="caption"><span class="method-name">ground truth</span><span class="metric">{hw}&times;{hh}</span></div></div>',
+        f'        <div class="thumb baseline"><img src="data:image/jpeg;base64,{_b64_jpeg(_thumbnail(nn_full, interpolation=cv2.INTER_NEAREST))}" alt="low-res input (before)"><div class="caption"><span class="method-name">low-res input</span><span class="metric">{lw}&times;{lh} native &mdash; {nn_psnr:.2f} dB / {nn_ssim:.3f}</span></div></div>',
     ]
     for r in rows:
         cls = "best" if r["method"] == best_method else ("baseline" if r["method"].startswith(_BASELINE_PREFIXES) else "")
@@ -274,8 +304,10 @@ def _render_card(image: str, scale: int, rows: list[dict]) -> str:
 
 def _build_html(run_id: str, commit: dict, ts: str, cards: dict) -> str:
     h = _html.escape
-    total = len(cards)
-    improved = sum(1 for rows in cards.values() if _card_verdict(rows)[0])
+    verdicts = [_card_verdict(rows) for rows in cards.values()]
+    scored = [v for v in verdicts if v is not None]
+    total = len(scored)
+    improved = sum(1 for v in scored if v[0])
     verdict_cls = "pass" if improved == total else "fail"
     verdict_text = "PASS" if improved == total else "NEEDS IMPROVEMENT"
 
@@ -333,18 +365,29 @@ def main() -> None:
     tmp_dir = Path(tempfile.mkdtemp(prefix="sr_eval_"))
     try:
         names = _prepare_cropped_fixtures(tmp_dir)
-        print(f"  Cropped {len(names)} fixture images to {CROP_SIZE[0]}x{CROP_SIZE[1]}")
+        ref_w, ref_h = CROP_SIZE[0] // BASE_DOWNSCALE, CROP_SIZE[1] // BASE_DOWNSCALE
+        print(
+            f"  Cropped {len(names)} fixture images to {CROP_SIZE[0]}x{CROP_SIZE[1]}, "
+            f"then downscaled x{BASE_DOWNSCALE} to {ref_w}x{ref_h} ground truth"
+        )
 
         models_by_scale = load_models(MODEL_SPECS)
-        results = evaluate(str(tmp_dir), models_by_scale=models_by_scale, keep_images=True)
+        results = evaluate(
+            str(tmp_dir), models_by_scale=models_by_scale, baseline_scales=BASELINE_ONLY_SCALES, keep_images=True
+        )
         cards = _group_by_card(results)
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    total = len(cards)
+    total = 0
     improved = 0
     for (image, scale), rows in sorted(cards.items()):
-        is_improved, baseline_psnr, best_method = _card_verdict(rows)
+        verdict = _card_verdict(rows)
+        if verdict is None:
+            print(f"  .  {image} x{scale}: baseline only (no pretrained model at this scale)")
+            continue
+        is_improved, baseline_psnr, best_method = verdict
+        total += 1
         improved += int(is_improved)
         mark = "✓" if is_improved else "✗"
         print(f"  {mark}  {image} x{scale}: best={best_method} vs bilinear={baseline_psnr:.2f} dB")
