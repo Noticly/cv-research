@@ -28,3 +28,8 @@ build/
 dist/
 site/
 *.egg-info/
+
+# IDE and editor settings
+.idea/
+.vscode/
+*.swp
