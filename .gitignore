@@ -1,0 +1,30 @@
+# Python bytecode and test caches
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Virtual environments
+**/.venv/
+venv/
+env/
+ENV/
+
+# Local env/config overrides
+**/.env
+**/.env.*
+!.env.example
+
+# Model weights and other generated binaries
+**/*.pt
+**/*.pth
+
+# Common build outputs
+build/
+dist/
+site/
+*.egg-info/
