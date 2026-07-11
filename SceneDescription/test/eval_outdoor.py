@@ -4,7 +4,7 @@ Evaluate SceneDescription accuracy against the outdoor fixture set.
 Calls describe_scene() on each test image, then uses an LLM judge to score
 semantic similarity against a one-sentence ground truth (0.0–1.0).
 
-Usage (from research/SceneDescription):
+Usage (from SceneDescription):
     python test/eval_outdoor.py
 
 Writes eval_<YYYYMMDD>_<NNN>.json and .html to

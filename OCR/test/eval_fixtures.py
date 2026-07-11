@@ -1,7 +1,7 @@
 """
 Evaluate OCR accuracy against all fixture sets that contain a ground_truth.txt.
 
-Usage (from the research/OCR directory):
+Usage (from the OCR directory):
     python test/eval_fixtures.py                    # all fixture subfolders
     python test/eval_fixtures.py --fixture medicine_package
 

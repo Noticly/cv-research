@@ -2,7 +2,7 @@
 Evaluate SR methods (bilinear / adaptive-sharpen / pretrained FSRCNN & ESPCN /
 hybrid) against the medicine_package fixture set.
 
-Usage (from research/SuperResolution):
+Usage (from SuperResolution):
     .venv/bin/python test/eval_medicine_package.py
 
 Writes eval_<YYYYMMDD>_<NNN>.json and .html to test/fixtures/medicine_package/,

@@ -207,8 +207,8 @@ Runs the same evaluation against `test/fixtures/medicine_package/` (three
 photos, centre-cropped to 800×600 since these are full 12MP phone photos and
 the actual use case zooms into one region, not the whole frame) and writes a
 versioned, self-contained HTML+JSON report — the same convention as
-`research/OCR/test/eval_fixtures.py` and
-`research/ObjectDetection/test/eval_home_scene.py` (base64-embedded images,
+`OCR/test/eval_fixtures.py` and
+`ObjectDetection/test/eval_home_scene.py` (base64-embedded images,
 dark header with commit info, `eval_<date>_<seq>` run IDs, green/orange
 pass-count summary banner). Each card's verdict is "Improved" if the best
 SR/hybrid method beats bilinear PSNR for that image×scale.

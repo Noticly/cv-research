@@ -1,6 +1,6 @@
-**Research Projects for OpenClarity**
+**Research Projects for Noticly**
 
-This folder contains multiple research projects for OpenClarity. For each project, there is a subfolder which contains all the codes, documents and tests. 
+This folder contains multiple research projects for Noticly. For each project, there is a subfolder which contains all the codes, documents and tests.
 
 ---
 

@@ -111,7 +111,7 @@ pretrained checkpoints' training convention — see `docs/algorithm_readme.md`
 `test/fixtures/medicine_package/` photos (centre-cropped, since these are
 full 12MP phone photos and the actual use case is zooming into one region)
 and writes a versioned, self-contained HTML+JSON report — the same
-convention used by `research/OCR` and `research/ObjectDetection`'s eval
+convention used by `OCR` and `ObjectDetection`'s eval
 harnesses:
 
 ```bash

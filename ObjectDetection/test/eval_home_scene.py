@@ -1,7 +1,7 @@
 """
 Evaluate object-location accuracy against the home_scene fixture set.
 
-Usage (from research/ObjectDetection):
+Usage (from ObjectDetection):
     .venv/bin/python test/eval_home_scene.py
 
 Writes eval_<YYYYMMDD>_<NNN>.json and .html to

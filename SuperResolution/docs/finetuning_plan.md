@@ -36,7 +36,7 @@ the target use case — it needs to be trained.
 | **Augmentation** | Random crop, horizontal flip, mild rotation (±5°), brightness/contrast jitter — needed because the domain dataset will be small; without augmentation the model will overfit to specific lighting/framing. |
 | **Compute** | CPU-feasible given the model sizes (ESPCN ~20k params, FSRCNN-small ~12k params) but a GPU (even a laptop GPU) will cut iteration time from hours to minutes per run. |
 | **Evaluation ground truth** | Held-out HR crops (not used in training) for `src/benchmark.py`'s PSNR/SSIM comparison. |
-| **Legibility proxy metric** | PSNR/SSIM don't directly measure "can a person read this text." A legibility proxy — running the existing OCR project's PaddleOCR wrapper (`research/OCR/src/ocr_engine.py`) on SR output vs. bilinear output and comparing recognition confidence/CER — is a more decision-relevant signal for this specific use case. |
+| **Legibility proxy metric** | PSNR/SSIM don't directly measure "can a person read this text." A legibility proxy — running the existing OCR project's PaddleOCR wrapper (`OCR/src/ocr_engine.py`) on SR output vs. bilinear output and comparing recognition confidence/CER — is a more decision-relevant signal for this specific use case. |
 | **Quantization re-validation** | After fine-tuning, re-run `src/export.py`'s `max_psnr_delta` check — INT8 quantization error tolerance was set against generic content; must reconfirm it holds on text crops, since quantization tends to hurt fine, high-frequency detail (exactly what text edges are) more than smooth content. |
 
 ---
@@ -118,10 +118,10 @@ large regression (> 1 dB) on the general-domain val split.
 
 **Tasks**
 - Extend `src/benchmark.py` (or add a sibling script) to run the existing
-  PaddleOCR wrapper from `research/OCR/src/ocr_engine.py` on each method's
+  PaddleOCR wrapper from `OCR/src/ocr_engine.py` on each method's
   output (bilinear, adaptive-sharpen, SR, hybrid) for a set of text crops
   with known ground-truth text.
-- Compute CER (reusing `research/OCR`'s evaluation approach) per method as a
+- Compute CER (reusing `OCR`'s evaluation approach) per method as a
   legibility proxy, in addition to PSNR/SSIM.
 - Confirm the fine-tuned model (and hybrid post-processing) reduces CER
   relative to bilinear zoom — this is the metric that actually reflects "can

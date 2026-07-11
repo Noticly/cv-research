@@ -111,7 +111,7 @@ Tested at commit `09d43a5` · 2026-06-29
 ### Run the eval
 
 ```bash
-# from research/SceneDescription/
+# from SceneDescription/
 echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
 .venv/bin/python test/eval_outdoor.py
 ```

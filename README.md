@@ -1,8 +1,8 @@
-# OpenClarity
+# Noticly
 
 > *Understanding Made Clear*
 
-OpenClarity is an open-source AI visual assistance platform for blind and low-vision users. Built on smart glasses, it delivers hands-free, first-person visual information — reading text, identifying objects, and describing scenes — so users can navigate everyday life with greater independence and confidence.
+Noticly is an open-source AI visual assistance platform for blind and low-vision users. Built on smart glasses, it delivers hands-free, first-person visual information - reading text, identifying objects, and describing scenes - so users can navigate everyday life with greater independence and confidence.
 
 ---
 
@@ -16,7 +16,7 @@ We believe assistive technology should be:
 - **Transparent** — open source so anyone can inspect, verify, and improve it
 - **Safe** — honest about what AI can and cannot reliably do
 
-OpenClarity provides *information assistance, not mobility assistance*. We help users understand what is in front of them. We do not replace a cane, a guide dog, or human judgment.
+Noticly provides *information assistance, not mobility assistance*. We help users understand what is in front of them. We do not replace a cane, a guide dog, or human judgment.
 
 ---
 
@@ -28,12 +28,12 @@ We are building toward a complete open-source assistive technology ecosystem:
 
 | Platform | Purpose |
 |---|---|
-| OpenClarity Vision | AI smart glasses (flagship) |
-| OpenClarity Audio | Spatial audio assistance |
-| OpenClarity Cane | Smart cane integration |
-| OpenClarity Platform | Unified open SDK for developers |
+| Noticly Vision | AI smart glasses (flagship) |
+| Noticly Audio | Spatial audio assistance |
+| Noticly Cane | Smart cane integration |
+| Noticly Platform | Unified open SDK for developers |
 
-Think of OpenClarity the way you think of Arduino or Linux: a trusted open foundation that anyone can build on.
+Think of Noticly the way you think of Arduino or Linux: a trusted open foundation that anyone can build on.
 
 ---
 
@@ -41,7 +41,7 @@ Think of OpenClarity the way you think of Arduino or Linux: a trusted open found
 
 ### 1. Open by Default
 
-Every line of our code is public. Our algorithms are auditable. Our roadmap is community-driven. We chose the name *Open*Clarity because openness is not a feature — it is the foundation.
+Every line of our code is public. Our algorithms are auditable. Our roadmap is community-driven. We chose the name *Noticly* because assistive technology should help people notice what matters quickly, clearly, and with confidence.
 
 We will never hide what our AI does, how it makes decisions, or what data it uses.
 
@@ -54,7 +54,7 @@ We will never hide what our AI does, how it makes decisions, or what data it use
 - What is in front of you
 - Which button starts the machine
 
-OpenClarity turns visual uncertainty into clear, concise, actionable information. One answer. Short sentences. No guessing.
+Noticly turns visual uncertainty into clear, concise, actionable information. One answer. Short sentences. No guessing.
 
 ### 3. Clarity in Code
 
@@ -62,7 +62,7 @@ Open source means nothing if the code is unreadable. We hold ourselves to the sa
 
 ### 4. Safety Honesty
 
-We state clearly what OpenClarity is designed to do — and what it is not:
+We state clearly what Noticly is designed to do - and what it is not:
 
 | We do | We do not |
 |---|---|
@@ -78,7 +78,7 @@ When AI confidence is low, we say so. Users deserve honesty over false reassuran
 
 Current leading assistive glasses cost $1,700–$4,500. That price excludes the majority of the 285 million blind and low-vision people worldwide.
 
-OpenClarity targets **$299–$499** for hardware by combining open-source software with accessible commodity hardware. We believe the price of independence should not depend on how wealthy you are.
+Noticly targets **$299-$499** for hardware by combining open-source software with accessible commodity hardware. We believe the price of independence should not depend on how wealthy you are.
 
 ### 6. Privacy by Design
 
@@ -92,9 +92,9 @@ Smart glasses with cameras and microphones are high-trust devices. We earn that 
 
 ---
 
-## What OpenClarity Does Today
+## What Noticly Does Today
 
-OpenClarity focuses on four high-value, low-risk task categories:
+Noticly focuses on four high-value, low-risk task categories:
 
 ### Read
 Menus, medicine labels, mail, price tags, appliance buttons, packages, signs.
@@ -120,11 +120,11 @@ Open-ended visual questions about anything in your field of view.
 
 ## Technology Approach
 
-OpenClarity runs on smart glasses with a first-person camera, bone-conduction audio, and voice input. This form factor reduces interaction friction that phone-based tools cannot eliminate:
+Noticly runs on smart glasses with a first-person camera, bone-conduction audio, and voice input. This form factor reduces interaction friction that phone-based tools cannot eliminate:
 
 **Phone:** unlock → open app → point camera → hold steady → wait → hear result
 
-**OpenClarity glasses:** tap or say a word → look at target → hear result
+**Noticly glasses:** tap or say a word -> look at target -> hear result
 
 Key architecture principles:
 - **Local-first for speed** — OCR and common object detection run on-device
@@ -149,10 +149,12 @@ We define early success as:
 ## Project Structure
 
 ```
-openclarity/
-├── docs/          Documentation, research, product specs
-├── product/       Product design and roadmaps
-└── research/      Market research, user research, competitive analysis
+noticly/
+├── docs/               Documentation and planning
+├── OCR/                OCR research project
+├── ObjectDetection/    Object detection research project
+├── SceneDescription/   Scene description research project
+└── SuperResolution/    Super-resolution research project
 ```
 
 ---
@@ -175,10 +177,10 @@ Medication management, kitchen assistance, shopping, mail reading, appliance ope
 
 ## Get Involved
 
-OpenClarity is community-driven. Whether you are a developer, a blind or low-vision user, a researcher, or an accessibility advocate — there is a place for you here.
+Noticly is community-driven. Whether you are a developer, a blind or low-vision user, a researcher, or an accessibility advocate - there is a place for you here.
 
-- **GitHub:** [github.com/openclarity](https://github.com/openclarity)
+- **GitHub:** [github.com/noticly](https://github.com/noticly)
 
 ---
 
-*OpenClarity — Open Source, Crystal Clear.*
+*Noticly - Open Source, Crystal Clear.*
