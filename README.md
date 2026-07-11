@@ -148,9 +148,11 @@ We define early success as:
 
 ## Project Structure
 
+Research overview: `docs/research_overview.md`
+
 ```
 noticly/
-├── docs/               Documentation and planning
+├── docs/               Shared documentation and research overview
 ├── OCR/                OCR research project
 ├── ObjectDetection/    Object detection research project
 ├── SceneDescription/   Scene description research project
